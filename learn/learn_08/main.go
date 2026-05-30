@@ -3,24 +3,56 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"math/rand"
 	"time"
 )
 
+func firstGetData(ctx context.Context, ch chan int) {
+	for {
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case ch <- rand.Intn(99):
+		case <-ctx.Done():
+			return
+		}
+	}
+
+}
+
+func secondGetData(ctx context.Context, ch chan int) {
+	for {
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case ch <- 100 + rand.Intn(99):
+		case <-ctx.Done():
+			return
+		}
+	}
+
+}
+
 func main() {
-	// Запрос с таймаутом 3 секунды
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", "<https://slow-api.example.com>", nil)
+	ch := make(chan int)
+	go firstGetData(ctx, ch)
+	go secondGetData(ctx, ch)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println("Request failed:", err) // context deadline exceeded
-		return
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-ch:
+			fmt.Println(result)
+		}
 	}
-	defer resp.Body.Close()
-
-	fmt.Println("Status:", resp.Status)
 }

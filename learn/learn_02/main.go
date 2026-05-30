@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,9 +61,10 @@ var cache savedWeather = savedWeather{
 	mu:          sync.RWMutex{},
 }
 
-func addToCash(weat weather, sity string) error {
+func addToCache(weat weather, sity string) error {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	sity = strings.ToLower(sity)
 	cache.saveWeather[sity] = cacheItem{
 		weatherItem: weat,
 		sity:        sity,
@@ -71,9 +73,18 @@ func addToCash(weat weather, sity string) error {
 	return nil
 }
 
-func readCache(sity string) error {
+func readCache(sity string) (weather, bool, error) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
+	sity = strings.ToLower(sity)
+	elem, ok := cache.saveWeather[sity]
+	if !ok {
+		return weather{}, false, nil
+	}
+	if time.Since(elem.time) > 5*time.Minute {
+		return weather{}, false, nil
+	}
+	return elem.weatherItem, true, nil
 }
 
 func urlRequest(apiUrl string, params []any, target interface{}) (err error) {
@@ -208,7 +219,20 @@ func funcGetWeather() {
 		if sity == "exit" {
 			return
 		}
-		weat, err := getWeather(sity)
+
+		weat, statusFound, err := readCache(sity)
+		if statusFound {
+			fmt.Println(">Получено из КЭШа<")
+			outWeather(weat)
+			continue
+		}
+
+		weat, err = getWeather(sity)
+		if err != nil {
+			fmt.Println("[ERROR]: ", err)
+			continue
+		}
+		err = addToCache(weat, sity)
 		if err != nil {
 			fmt.Println("[ERROR]: ", err)
 			continue
