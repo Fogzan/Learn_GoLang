@@ -1,56 +1,94 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 )
 
-func Worker(id int, in <-chan int) <-chan int {
+func Worker(ctx context.Context, id int, in <-chan int) <-chan int {
 	ch := make(chan int)
 
 	go func() {
 		defer close(ch)
 
-		for data := range in {
-			time.Sleep(1 * time.Second)
-			fmt.Printf("Worker: %v обработал число: %v\n", id, data)
-			ch <- data * 2
-		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case i, ok := <-in:
+				if !ok {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(1 * time.Second):
+					fmt.Printf("Worker: %v обработал число: %v\n", id, i)
+					select {
+					case <-ctx.Done():
+						return
+					case ch <- i * 2:
+					}
+				}
 
+			}
+		}
 	}()
 
 	return ch
 }
 
-func FanOut(in <-chan int, workers int) []<-chan int {
+func FanOut(ctx context.Context, in <-chan int, workers int) []<-chan int {
 	chans := make([]<-chan int, workers)
 	for i := range workers {
-		chans[i] = Worker(i, in)
+		chans[i] = Worker(ctx, i, in)
 	}
 	return chans
 }
 
 func main() {
+	timeStart := time.Now()
+	defer func() {
+		fmt.Printf("Время выполнения паттерна: %v\n", time.Since(timeStart))
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	ch := make(chan int)
 	go func() {
 		defer close(ch)
-		for i := range 100 {
-			ch <- i
+		for i := range 10 {
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- i:
+			}
 		}
 	}()
 
-	workerPool := FanOut(ch, 2)
+	workers := FanOut(ctx, ch, 2)
 
 	wg := sync.WaitGroup{}
 
-	for _, elem := range workerPool {
+	for _, elem := range workers {
 		wg.Add(1)
 		go func() {
-			for i := range elem {
-				fmt.Println(i)
+			defer wg.Done()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case i, ok := <-elem:
+					if !ok {
+						return
+					}
+					fmt.Println(i)
+				}
 			}
-			wg.Done()
 		}()
 	}
 	wg.Wait()

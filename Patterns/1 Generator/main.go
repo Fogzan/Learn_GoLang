@@ -38,12 +38,15 @@ func FilterEven(ctx context.Context, in <-chan int) <-chan int {
 				if !ok {
 					return
 				}
-				select {
-				case <-ctx.Done():
-					return
-				case out <- i + 10:
+				if i%2 == 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case out <- i + 10:
 
+					}
 				}
+
 			}
 		}
 	}()
